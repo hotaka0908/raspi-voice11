@@ -24,7 +24,70 @@ import {
   setLifelogCaptureCallback,
   startLifelogThread,
   stopLifelogThread,
+  pauseLifelog,
+  resumeLifelog,
 } from "./capabilities/index.js";
+
+// 音声メッセージモードの状態管理
+interface VoiceMessageState {
+  isActive: boolean;
+  audioChunks: Buffer[];
+  startTime: number | null;
+  timeout: NodeJS.Timeout | null;
+}
+
+const voiceMessageState: VoiceMessageState = {
+  isActive: false,
+  audioChunks: [],
+  startTime: null,
+  timeout: null,
+};
+
+// 音声メッセージの最大録音時間（秒）
+const VOICE_MESSAGE_MAX_DURATION = 60;
+
+// 確認音を生成（簡易的なビープ音）
+function generateBeepTone(frequency: number, durationMs: number, sampleRate = 24000): Buffer {
+  const numSamples = Math.floor((sampleRate * durationMs) / 1000);
+  const buffer = Buffer.alloc(numSamples * 2); // 16-bit samples
+
+  for (let i = 0; i < numSamples; i++) {
+    const t = i / sampleRate;
+    // フェードイン/アウトを適用
+    const fadeLength = Math.floor(numSamples * 0.1);
+    let amplitude = 0.3;
+    if (i < fadeLength) {
+      amplitude *= i / fadeLength;
+    } else if (i > numSamples - fadeLength) {
+      amplitude *= (numSamples - i) / fadeLength;
+    }
+    const sample = Math.floor(amplitude * 32767 * Math.sin(2 * Math.PI * frequency * t));
+    buffer.writeInt16LE(sample, i * 2);
+  }
+
+  return buffer;
+}
+
+// 開始音（上昇トーン）
+function generateStartTone(): Buffer {
+  const tone1 = generateBeepTone(440, 100);
+  const tone2 = generateBeepTone(660, 100);
+  return Buffer.concat([tone1, tone2]);
+}
+
+// 完了音（下降トーン）
+function generateCompleteTone(): Buffer {
+  const tone1 = generateBeepTone(660, 100);
+  const tone2 = generateBeepTone(880, 150);
+  return Buffer.concat([tone1, tone2]);
+}
+
+// エラー音
+function generateErrorTone(): Buffer {
+  const tone1 = generateBeepTone(200, 200);
+  const tone2 = generateBeepTone(150, 300);
+  return Buffer.concat([tone1, tone2]);
+}
 
 class AudioHandlerImpl implements AudioHandler {
   private audioBridge: AudioBridge;
@@ -68,6 +131,132 @@ async function main(): Promise<void> {
     }
   });
 
+  // 音声メッセージモードを開始
+  const startVoiceMessageMode = () => {
+    if (voiceMessageState.isActive) return;
+
+    console.log("[VoiceMessage] Mode started - Recording...");
+    voiceMessageState.isActive = true;
+    voiceMessageState.audioChunks = [];
+    voiceMessageState.startTime = Date.now();
+
+    // ライフログを一時停止
+    pauseLifelog();
+
+    // 開始音を再生
+    const startTone = generateStartTone();
+    audioBridge.sendAudioOutput(startTone);
+
+    // 録音開始
+    audioBridge.startRecording();
+
+    // タイムアウト設定
+    voiceMessageState.timeout = setTimeout(async () => {
+      if (voiceMessageState.isActive) {
+        console.log("[VoiceMessage] Timeout - Auto sending...");
+        await finishVoiceMessage();
+      }
+    }, VOICE_MESSAGE_MAX_DURATION * 1000);
+  };
+
+  // 音声メッセージモードを終了して送信
+  const finishVoiceMessage = async () => {
+    if (!voiceMessageState.isActive) return;
+
+    // タイムアウトをクリア
+    if (voiceMessageState.timeout) {
+      clearTimeout(voiceMessageState.timeout);
+      voiceMessageState.timeout = null;
+    }
+
+    // 録音停止
+    audioBridge.stopRecording();
+    voiceMessageState.isActive = false;
+
+    const chunks = voiceMessageState.audioChunks;
+    voiceMessageState.audioChunks = [];
+
+    // ライフログを再開
+    resumeLifelog();
+
+    if (chunks.length === 0) {
+      console.log("[VoiceMessage] No audio recorded");
+      const errorTone = generateErrorTone();
+      audioBridge.sendAudioOutput(errorTone);
+      return;
+    }
+
+    // 音声データを結合
+    const audioData = Buffer.concat(chunks);
+    const duration = voiceMessageState.startTime
+      ? (Date.now() - voiceMessageState.startTime) / 1000
+      : 0;
+
+    console.log(
+      `[VoiceMessage] Recorded ${audioData.length} bytes (${duration.toFixed(1)}s)`
+    );
+
+    // WAVヘッダーを追加（24kHz, 16-bit, mono）
+    const wavData = createWavBuffer(audioData, 24000, 16, 1);
+
+    // Firebaseにアップロード
+    console.log("[VoiceMessage] Uploading to Firebase...");
+    try {
+      const success = await firebaseMessenger.sendMessage(wavData);
+      if (success) {
+        console.log("[VoiceMessage] Sent successfully!");
+        const completeTone = generateCompleteTone();
+        audioBridge.sendAudioOutput(completeTone);
+      } else {
+        console.error("[VoiceMessage] Upload failed");
+        const errorTone = generateErrorTone();
+        audioBridge.sendAudioOutput(errorTone);
+      }
+    } catch (error) {
+      console.error("[VoiceMessage] Error:", error);
+      const errorTone = generateErrorTone();
+      audioBridge.sendAudioOutput(errorTone);
+    }
+
+    voiceMessageState.startTime = null;
+  };
+
+  // WAVファイルを作成
+  function createWavBuffer(
+    pcmData: Buffer,
+    sampleRate: number,
+    bitsPerSample: number,
+    channels: number
+  ): Buffer {
+    const byteRate = (sampleRate * channels * bitsPerSample) / 8;
+    const blockAlign = (channels * bitsPerSample) / 8;
+    const dataSize = pcmData.length;
+    const headerSize = 44;
+
+    const header = Buffer.alloc(headerSize);
+
+    // RIFF header
+    header.write("RIFF", 0);
+    header.writeUInt32LE(dataSize + headerSize - 8, 4);
+    header.write("WAVE", 8);
+
+    // fmt chunk
+    header.write("fmt ", 12);
+    header.writeUInt32LE(16, 16); // chunk size
+    header.writeUInt16LE(1, 20); // audio format (PCM)
+    header.writeUInt16LE(channels, 22);
+    header.writeUInt32LE(sampleRate, 24);
+    header.writeUInt32LE(byteRate, 28);
+    header.writeUInt16LE(blockAlign, 32);
+    header.writeUInt16LE(bitsPerSample, 34);
+
+    // data chunk
+    header.write("data", 36);
+    header.writeUInt32LE(dataSize, 40);
+
+    return Buffer.concat([header, pcmData]);
+  }
+
   // Capabilityの初期化
   // Vision: カメラキャプチャのコールバックを設定
   setCaptureCallback(async () => {
@@ -101,11 +290,9 @@ async function main(): Promise<void> {
   // Music: 音声の停止/開始コールバックを設定
   setMusicAudioCallbacks(
     () => {
-      // 音楽再生を停止する必要がある場合
       console.log("[Music] Audio stop requested");
     },
     () => {
-      // 音楽再生を再開する場合
       console.log("[Music] Audio start requested");
     }
   );
@@ -113,7 +300,6 @@ async function main(): Promise<void> {
   // Schedule: アラーム通知コールバックを設定
   setAlarmNotifyCallback(async (message: string) => {
     console.log(`[Alarm] ${message}`);
-    // Realtime APIを通じてユーザーに通知
     // TODO: 音声合成で通知
   });
   startAlarmThread();
@@ -127,11 +313,22 @@ async function main(): Promise<void> {
 
   // AudioBridgeのイベントハンドラを設定
   audioBridge.on("audioInput", async (data: Buffer) => {
-    // 録音中の音声をOpenAIに送信
-    await realtimeClient.sendAudioChunk(data);
+    if (voiceMessageState.isActive) {
+      // 音声メッセージモード中は音声を蓄積
+      voiceMessageState.audioChunks.push(Buffer.from(data));
+    } else {
+      // 通常モードはOpenAIに送信
+      await realtimeClient.sendAudioChunk(data);
+    }
   });
 
   audioBridge.on("buttonPress", async () => {
+    // 音声メッセージモード中は無視（ダブルクリックの2回目のプレスは別イベント）
+    if (voiceMessageState.isActive) {
+      console.log("[Button] Press ignored (in voice message mode)");
+      return;
+    }
+
     console.log("[Button] Press detected");
     // 音楽再生中なら一時停止
     if (isMusicActive()) {
@@ -142,6 +339,13 @@ async function main(): Promise<void> {
   });
 
   audioBridge.on("buttonRelease", async () => {
+    if (voiceMessageState.isActive) {
+      // 音声メッセージモード中は送信処理
+      console.log("[Button] Release detected - Finishing voice message");
+      await finishVoiceMessage();
+      return;
+    }
+
     console.log("[Button] Release detected");
     audioBridge.stopRecording();
     await realtimeClient.sendActivityEnd();
@@ -149,13 +353,10 @@ async function main(): Promise<void> {
 
   audioBridge.on("buttonDoubleClick", async () => {
     console.log("[Button] Double click detected - Voice message mode");
-    // TODO: 音声メッセージモードの実装
-    // 1. 録音開始
-    // 2. 録音終了後、Firebaseにアップロード
-    // 3. 送信確認の音声を再生
+    startVoiceMessageMode();
   });
 
-  // Firebase: 新着メッセージのリスナーを開始
+  // Firebase: 新着メッセージのリスナーを開始（コールバック付き）
   firebaseMessenger.startListening(5000);
 
   // 接続を開始
@@ -168,11 +369,21 @@ async function main(): Promise<void> {
     await realtimeClient.connect();
     console.log("[Main] OpenAI connected");
 
-    console.log("\n[Main] Ready! Press the button to speak.\n");
+    console.log("\n[Main] Ready! Press the button to speak.");
+    console.log("[Main] Double-click to send a voice message.\n");
 
     // プロセス終了時のクリーンアップ
     const cleanup = async () => {
       console.log("\n[Main] Shutting down...");
+
+      // 音声メッセージモード中なら終了
+      if (voiceMessageState.isActive) {
+        if (voiceMessageState.timeout) {
+          clearTimeout(voiceMessageState.timeout);
+        }
+        voiceMessageState.isActive = false;
+      }
+
       stopAlarmThread();
       stopLifelogThread();
       stopMusicPlayer();
@@ -193,10 +404,7 @@ async function main(): Promise<void> {
     console.error("[Main] Startup error:", error);
 
     // Python daemonが起動していない場合のフォールバック
-    if (
-      error instanceof Error &&
-      error.message.includes("ENOENT")
-    ) {
+    if (error instanceof Error && error.message.includes("ENOENT")) {
       console.log("\n[Main] Python audio daemon is not running.");
       console.log("Please start the daemon first:");
       console.log("  cd audio-daemon && python daemon.py\n");
