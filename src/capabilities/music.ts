@@ -13,7 +13,7 @@ import type { Capability, CapabilityResult, Tool } from "./types.js";
 import { CapabilityCategory } from "./types.js";
 
 let playerProcess: ChildProcess | null = null;
-let currentTrack: string | null = null;
+let _currentTrack: string | null = null;
 let isPaused = false;
 
 // オーディオコールバック（メインのオーディオストリーム制御用）
@@ -42,7 +42,7 @@ function killPlayer(restartAudio = true): void {
       // プロセスが既に終了している場合は無視
     }
     playerProcess = null;
-    currentTrack = null;
+    _currentTrack = null;
     isPaused = false;
   }
 
@@ -84,19 +84,19 @@ async function playYouTube(query: string): Promise<boolean> {
       detached: true,
     });
 
-    currentTrack = query;
+    _currentTrack = query;
     isPaused = false;
 
     // エラーハンドリング
     playerProcess.on("error", (error) => {
       console.error("[Music] mpv error:", error);
       playerProcess = null;
-      currentTrack = null;
+      _currentTrack = null;
     });
 
     playerProcess.on("exit", () => {
       playerProcess = null;
-      currentTrack = null;
+      _currentTrack = null;
       isPaused = false;
 
       // 再生終了後、オーディオストリームを再開
@@ -113,7 +113,7 @@ async function playYouTube(query: string): Promise<boolean> {
     await new Promise((resolve) => setTimeout(resolve, 500));
     if (playerProcess?.exitCode !== null) {
       playerProcess = null;
-      currentTrack = null;
+      _currentTrack = null;
       return false;
     }
 
@@ -309,7 +309,7 @@ export class MusicCapability implements Capability {
       return { success: false, message: "音楽は流れていません" };
     }
 
-    const wasPaused = isPaused;
+    const _wasPaused = isPaused;
 
     try {
       if (isPaused) {

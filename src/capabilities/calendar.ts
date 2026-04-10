@@ -15,7 +15,7 @@ import { Config } from "../config.js";
 import { resolve } from "path";
 import { homedir } from "os";
 
-const CALENDAR_SCOPES = ["https://www.googleapis.com/auth/calendar"];
+const _CALENDAR_SCOPES = ["https://www.googleapis.com/auth/calendar"];
 
 let calendarService: calendar_v3.Calendar | null = null;
 

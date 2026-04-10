@@ -13,7 +13,7 @@ import type { Capability, CapabilityResult, Tool } from "./types.js";
 import { CapabilityCategory } from "./types.js";
 import { Config } from "../config.js";
 
-const GMAIL_SCOPES = [
+const _GMAIL_SCOPES = [
   "https://www.googleapis.com/auth/gmail.readonly",
   "https://www.googleapis.com/auth/gmail.send",
   "https://www.googleapis.com/auth/gmail.modify",
@@ -86,7 +86,7 @@ function createEmailMessage(
   to: string,
   subject: string,
   body: string,
-  threadId?: string
+  _threadId?: string
 ): string {
   const message = [
     `To: ${to}`,

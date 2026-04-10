@@ -101,7 +101,7 @@ export class AudioBridge extends EventEmitter {
       try {
         const message = JSON.parse(line) as Message;
         this.handleMessage(message);
-      } catch (error) {
+      } catch {
         console.error("[AudioBridge] Failed to parse message:", line);
       }
     }
