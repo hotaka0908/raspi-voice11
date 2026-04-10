@@ -26,12 +26,20 @@ type MessageType =
   | "button_double_click"
   | "start_recording"
   | "stop_recording"
+  | "capture_image"
+  | "capture_result"
   | "ping"
   | "pong";
 
 interface Message {
   type: MessageType;
-  data?: string; // base64 encoded audio data
+  data?: string; // base64 encoded data
+  success?: boolean;
+}
+
+interface CaptureRequest {
+  resolve: (data: Buffer | null) => void;
+  reject: (error: Error) => void;
 }
 
 export class AudioBridge extends EventEmitter {
@@ -39,6 +47,7 @@ export class AudioBridge extends EventEmitter {
   private _isConnected = false;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private buffer = "";
+  private pendingCapture: CaptureRequest | null = null;
 
   constructor() {
     super();
@@ -122,6 +131,18 @@ export class AudioBridge extends EventEmitter {
       case "pong":
         // Heartbeat response
         break;
+
+      case "capture_result":
+        if (this.pendingCapture) {
+          if (message.success && message.data) {
+            const imageData = Buffer.from(message.data, "base64");
+            this.pendingCapture.resolve(imageData);
+          } else {
+            this.pendingCapture.resolve(null);
+          }
+          this.pendingCapture = null;
+        }
+        break;
     }
   }
 
@@ -152,6 +173,36 @@ export class AudioBridge extends EventEmitter {
 
   stopRecording(): void {
     this.sendMessage({ type: "stop_recording" });
+  }
+
+  captureImage(): Promise<Buffer | null> {
+    return new Promise((resolve, reject) => {
+      if (!this._isConnected) {
+        resolve(null);
+        return;
+      }
+
+      // タイムアウト設定
+      const timeout = setTimeout(() => {
+        if (this.pendingCapture) {
+          this.pendingCapture.resolve(null);
+          this.pendingCapture = null;
+        }
+      }, 15000);
+
+      this.pendingCapture = {
+        resolve: (data) => {
+          clearTimeout(timeout);
+          resolve(data);
+        },
+        reject: (error) => {
+          clearTimeout(timeout);
+          reject(error);
+        },
+      };
+
+      this.sendMessage({ type: "capture_image" });
+    });
   }
 
   private sendMessage(message: Message): void {

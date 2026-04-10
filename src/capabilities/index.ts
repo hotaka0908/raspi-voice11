@@ -6,3 +6,4 @@ export { CalendarCapability, initCalendar } from "./calendar.js";
 export { CommunicationCapability, initGmail } from "./communication.js";
 export { MusicCapability, setMusicAudioCallbacks, isMusicPlaying, isMusicActive, pauseMusicForConversation, resumeMusicAfterConversation, stopMusicPlayer } from "./music.js";
 export { ScheduleCapability, setAlarmNotifyCallback, startAlarmThread, stopAlarmThread } from "./schedule.js";
+export { LifelogCapability, setLifelogFirebaseMessenger, setLifelogCaptureCallback, startLifelogThread, stopLifelogThread, pauseLifelog, resumeLifelog, isLifelogPaused } from "./lifelog.js";

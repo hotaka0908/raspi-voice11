@@ -11,6 +11,7 @@ import { CalendarCapability } from "./calendar.js";
 import { CommunicationCapability } from "./communication.js";
 import { MusicCapability } from "./music.js";
 import { ScheduleCapability } from "./schedule.js";
+import { LifelogCapability } from "./lifelog.js";
 
 export class CapabilityExecutor {
   private static instance: CapabilityExecutor;
@@ -37,6 +38,7 @@ export class CapabilityExecutor {
       new CommunicationCapability(),
       new MusicCapability(),
       new ScheduleCapability(),
+      new LifelogCapability(),
     ];
 
     for (const capability of capabilities) {

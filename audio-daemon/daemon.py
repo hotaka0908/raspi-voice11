@@ -190,6 +190,43 @@ class AudioHandler:
             self.pyaudio.terminate()
 
 
+class CameraHandler:
+    """カメラハンドラ（Raspberry Pi用）"""
+
+    def __init__(self):
+        self._lock = asyncio.Lock()
+
+    async def capture(self) -> Optional[bytes]:
+        """画像を撮影"""
+        import subprocess
+
+        async with self._lock:
+            try:
+                image_path = "/tmp/ai_necklace_capture.jpg"
+                result = subprocess.run(
+                    ["rpicam-still", "-o", image_path, "-t", "500",
+                     "--width", "1280", "--height", "960"],
+                    capture_output=True, text=True, timeout=10
+                )
+
+                if result.returncode != 0:
+                    print(f"[Camera] Capture failed: {result.stderr}")
+                    return None
+
+                with open(image_path, "rb") as f:
+                    return f.read()
+
+            except subprocess.TimeoutExpired:
+                print("[Camera] Capture timeout")
+                return None
+            except FileNotFoundError:
+                print("[Camera] rpicam-still not found")
+                return None
+            except Exception as e:
+                print(f"[Camera] Capture error: {e}")
+                return None
+
+
 class ButtonHandler:
     """GPIOボタンハンドラ（Raspberry Pi用）"""
 
@@ -246,6 +283,7 @@ class DaemonServer:
     def __init__(self):
         self.audio_handler = AudioHandler()
         self.button_handler = ButtonHandler()
+        self.camera_handler = CameraHandler()
         self.server = None
         self.clients: list = []
 
@@ -335,6 +373,21 @@ class DaemonServer:
         elif msg_type == "stop_recording":
             # 録音停止
             self.audio_handler.stop_recording()
+
+        elif msg_type == "capture_image":
+            # 画像撮影
+            image_data = await self.camera_handler.capture()
+            if image_data:
+                self._send(writer, {
+                    "type": "capture_result",
+                    "success": True,
+                    "data": base64.b64encode(image_data).decode()
+                })
+            else:
+                self._send(writer, {
+                    "type": "capture_result",
+                    "success": False
+                })
 
         elif msg_type == "ping":
             # Heartbeat
