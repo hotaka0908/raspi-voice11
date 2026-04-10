@@ -6,6 +6,11 @@
 
 import type { Capability, CapabilityResult, Tool } from "./types.js";
 import { SearchCapability } from "./search.js";
+import { VisionCapability } from "./vision.js";
+import { CalendarCapability } from "./calendar.js";
+import { CommunicationCapability } from "./communication.js";
+import { MusicCapability } from "./music.js";
+import { ScheduleCapability } from "./schedule.js";
 
 export class CapabilityExecutor {
   private static instance: CapabilityExecutor;
@@ -27,11 +32,11 @@ export class CapabilityExecutor {
     // 利用可能なCapabilityを登録
     const capabilities: Capability[] = [
       new SearchCapability(),
-      // TODO: 他のCapabilityを追加
-      // new VisionCapability(),
-      // new CommunicationCapability(),
-      // new CalendarCapability(),
-      // new MusicCapability(),
+      new VisionCapability(),
+      new CalendarCapability(),
+      new CommunicationCapability(),
+      new MusicCapability(),
+      new ScheduleCapability(),
     ];
 
     for (const capability of capabilities) {
