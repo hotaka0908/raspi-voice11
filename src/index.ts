@@ -47,6 +47,12 @@ async function main(): Promise<void> {
   // AudioBridgeを初期化（Python daemonへの接続）
   const audioBridge = new AudioBridge();
 
+  // エラーハンドラを先に設定（EventEmitterのエラーをキャッチ）
+  audioBridge.on("error", (error: Error) => {
+    // connect()のPromise.rejectで処理されるので、ここではログのみ
+    console.error("[AudioBridge] Error event:", error.message);
+  });
+
   // AudioHandlerを作成
   const audioHandler = new AudioHandlerImpl(audioBridge);
 
@@ -70,16 +76,24 @@ async function main(): Promise<void> {
 
   // Calendar: Google Calendar初期化
   try {
-    await initCalendar();
-    console.log("[Main] Google Calendar initialized");
+    const calendarOk = await initCalendar();
+    if (calendarOk) {
+      console.log("[Main] Google Calendar initialized");
+    } else {
+      console.warn("[Main] Google Calendar not available (token missing)");
+    }
   } catch (error) {
     console.warn("[Main] Google Calendar initialization failed:", error);
   }
 
   // Gmail: Gmail初期化
   try {
-    await initGmail();
-    console.log("[Main] Gmail initialized");
+    const gmailOk = await initGmail();
+    if (gmailOk) {
+      console.log("[Main] Gmail initialized");
+    } else {
+      console.warn("[Main] Gmail not available (token missing)");
+    }
   } catch (error) {
     console.warn("[Main] Gmail initialization failed:", error);
   }
